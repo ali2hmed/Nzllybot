@@ -1,0 +1,9 @@
+.env
+.venv/
+*.session*
+__pycache__/
+bot.db
+data/
+tmp/
+cookies*.txt
+CLAUDE.md
