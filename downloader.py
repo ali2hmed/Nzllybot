@@ -144,8 +144,22 @@ def _download_tiktok(ydl, entry, folder, number):
     return [out]
 
 
-def _ytdlp(url, folder):
-    """Runs in a thread: yt-dlp is not async."""
+def _ytdlp(url, folder, on_progress=None):
+    """Runs in a thread: yt-dlp is not async.
+
+    on_progress(fraction) is called with 0..1 for the whole post while files download.
+    """
+    where = {"index": 0, "count": 1}  # which item of the post is downloading
+
+    def report(done):
+        if on_progress:
+            on_progress(min((where["index"] + done) / where["count"], 1.0))
+
+    def hook(d):
+        total = d.get("total_bytes") or d.get("total_bytes_estimate")
+        if d.get("status") == "downloading" and total:
+            report(min(d.get("downloaded_bytes", 0) / total, 1.0))
+
     options = {
         "quiet": True,
         "no_warnings": True,
@@ -159,6 +173,7 @@ def _ytdlp(url, folder):
         "postprocessor_args": {"merger": ["-movflags", "+faststart"]},
         "socket_timeout": 30,
         "retries": 3,
+        "progress_hooks": [hook],
     }
     if cookies := _cookies(url):
         options["cookiefile"] = cookies
@@ -172,7 +187,9 @@ def _ytdlp(url, folder):
             caption=info.get("description") or "",
         )
         entries = list(info.get("entries") or []) if info.get("_type") == "playlist" else [info]
+        where["count"] = max(len(entries), 1)
         for number, entry in enumerate(entries, 1):
+            where["index"] = number - 1
             if post.site == "TikTok" and _tiktok_formats(entry):
                 post.media += [Media(path, "video") for path in _download_tiktok(ydl, entry, folder, number)]
             elif entry.get("formats") or entry.get("_type") in ("url", "url_transparent"):
@@ -183,6 +200,7 @@ def _ytdlp(url, folder):
                 path = folder / f"{number:02d}.jpg"
                 _fetch_file(thumb["url"], path)
                 post.media.append(Media(path, "photo"))
+            report(1.0)
     return post
 
 
@@ -238,8 +256,11 @@ async def _probe(media):
         media.thumb = thumb
 
 
-async def fetch(url, folder):
-    """Download one post into `folder`. Raises DownloadError with a friendly reason."""
+async def fetch(url, folder, on_progress=None):
+    """Download one post into `folder`. Raises DownloadError with a friendly reason.
+
+    on_progress(fraction) is called from another thread as the download goes on.
+    """
     try:
         url = await asyncio.to_thread(resolve, url)
     except OSError:
@@ -249,7 +270,7 @@ async def fetch(url, folder):
         post = await _gallery_dl(url, folder)
     else:
         try:
-            post = await asyncio.to_thread(_ytdlp, url, folder)
+            post = await asyncio.to_thread(_ytdlp, url, folder, on_progress)
         except yt_dlp.utils.DownloadError as e:
             reason = _error_key(e)
             if "tiktok.com" not in url or reason == "blocked":

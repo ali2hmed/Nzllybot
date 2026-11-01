@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import html
 import logging
 import os
@@ -11,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ChatType, ParseMode
-from pyrogram.errors import MessageNotModified, RPCError
+from pyrogram.errors import FloodWait, MessageNotModified, RPCError
 from pyrogram.raw.functions.bots import SetBotInfo
 from pyrogram.types import (
     BotCommand,
@@ -40,6 +41,7 @@ TZ = ZoneInfo(os.environ.get("TIMEZONE", "Asia/Baghdad"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", "."))
 TMP_DIR = DATA_DIR / "tmp"
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
+PROGRESS_EVERY = 2.5  # seconds between progress bar updates; Telegram limits message edits
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logging.getLogger("pyrogram").setLevel(logging.WARNING)
@@ -102,6 +104,58 @@ def caption_for(post):
     return "\n\n".join(parts)
 
 
+# ---------- progress ----------
+
+class Progress:
+    """What the status message should show: a stage and how far along it is (0..1)."""
+
+    def __init__(self):
+        self.stage = "downloading"
+        self.fraction = None  # None until we know, e.g. gallery-dl or albums don't report it
+
+    def set(self, fraction):
+        # Called from the download thread too; never go backwards.
+        self.fraction = max(fraction, self.fraction or 0.0)
+
+    def next_stage(self, stage):
+        self.stage, self.fraction = stage, None
+
+    def upload(self, current, total):
+        if total:
+            self.set(current / total)
+
+    def text(self, lang):
+        text = t(lang, self.stage)
+        if self.fraction is None:
+            return text
+        filled = round(self.fraction * 10)
+        bar = "▰" * filled + "▱" * (10 - filled)
+        return text + "\n\n" + t(lang, "progress", bar=bar, percent=int(self.fraction * 100))
+
+
+async def stop(task):
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+async def show_progress(status, progress, lang):
+    """Keep the status message up to date until cancelled."""
+    shown = progress.text(lang)
+    while True:
+        await asyncio.sleep(PROGRESS_EVERY)
+        text = progress.text(lang)
+        if text == shown:
+            continue
+        try:
+            await status.edit_text(text)
+            shown = text
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+        except RPCError:
+            pass
+
+
 # ---------- sending ----------
 
 def _file_id(message):
@@ -111,11 +165,12 @@ def _file_id(message):
     return None
 
 
-async def send_items(message, items, caption):
+async def send_items(message, items, caption, progress=None):
     """Send [(kind, file), ...] where file is a path or a Telegram file id.
 
     Photos and videos go out as albums of up to 10; audio is sent after.
     Returns [(kind, file_id), ...] so the post can be re-sent instantly next time.
+    progress(current, total) is called while a single file uploads (albums can't report it).
     """
     visual = [item for item in items if item[0] in ("photo", "video")]
     audio = [item for item in items if item[0] == "audio"]
@@ -132,9 +187,9 @@ async def send_items(message, items, caption):
     if len(visual) == 1:
         item = visual[0]
         if item[0] == "video":
-            msg = await message.reply_video(str(item[1]), caption=caption, **extras(item))
+            msg = await message.reply_video(str(item[1]), caption=caption, progress=progress, **extras(item))
         else:
-            msg = await message.reply_photo(str(item[1]), caption=caption)
+            msg = await message.reply_photo(str(item[1]), caption=caption, progress=progress)
         sent.append(_file_id(msg))
         first = False
     else:
@@ -168,20 +223,20 @@ async def download(message, url, lang):
         except RPCError as e:
             log.warning("Cached post %s couldn't be re-sent, downloading again: %s", key, e)
 
-    status = await message.reply(t(lang, "downloading"))
+    progress = Progress()
+    status = await message.reply(progress.text(lang))
+    updater = asyncio.create_task(show_progress(status, progress, lang))
     try:
         async with slots:
             with tempfile.TemporaryDirectory(dir=TMP_DIR) as folder:
-                post = await downloader.fetch(url, Path(folder))
+                post = await downloader.fetch(url, Path(folder), progress.set)
                 if any(m.path.stat().st_size > MAX_BYTES for m in post.media):
                     raise DownloadError("too_big")
-                try:
-                    await status.edit_text(t(lang, "uploading"))
-                except MessageNotModified:
-                    pass
+                progress.next_stage("uploading")
                 caption = caption_for(post)
                 items = [(m.kind, m.path, m) for m in post.media]
-                sent = await send_items(message, items, caption)
+                sent = await send_items(message, items, caption, progress.upload)
+        await stop(updater)
         # Short links only get a key after they're resolved, so ask again with the real URL.
         key = downloader.cache_key(post.url) or key
         log.info("Sent %s (%d files)", key or post.url, len(sent))
@@ -189,9 +244,11 @@ async def download(message, url, lang):
             db.save_sent(key, {"caption": caption, "items": sent})
         await status.delete()
     except DownloadError as e:
+        await stop(updater)
         log.info("Couldn't download %s: %s", url, e.args[0])
         await status.edit_text(t(lang, e.args[0]))
     except Exception:
+        await stop(updater)
         log.exception("Failed on %s", url)
         await status.edit_text(t(lang, "failed"))
 
