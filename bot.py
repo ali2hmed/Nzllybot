@@ -6,18 +6,20 @@ import os
 import shutil
 import signal
 import tempfile
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from pyrogram import Client, filters, idle
-from pyrogram.enums import ChatType, ParseMode
-from pyrogram.errors import FloodWait, MessageNotModified, RPCError
+from pyrogram.enums import ChatMemberStatus, ChatType, ParseMode
+from pyrogram.errors import FloodWait, MessageNotModified, RPCError, UserNotParticipant
 from pyrogram.raw.functions.bots import SetBotInfo
 from pyrogram.types import (
     BotCommand,
     BotCommandScopeAllGroupChats,
     BotCommandScopeAllPrivateChats,
+    BotCommandScopeChat,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputMediaPhoto,
@@ -32,7 +34,9 @@ from downloader import DownloadError
 from texts import CHOOSE_LANG, LANGS, t
 
 CHANNEL = "aliahmedbots"
-DEVELOPER = "ali2hmed"
+OWNER_ID = int(os.environ.get("OWNER_ID") or 0)  # your Telegram id: only you can use /stats
+# People must join this channel to use the bot (the bot must be an admin there). Empty turns it off.
+MUST_JOIN = os.environ.get("MUST_JOIN", CHANNEL).lstrip("@")
 MAX_LINKS = 5  # per message
 MAX_BYTES = 2000 * 1024 * 1024  # Telegram's limit for bots is 2 GB
 PARALLEL_DOWNLOADS = 3
@@ -69,7 +73,7 @@ def user_lang(user):
 
 
 def welcome_text(lang, user):
-    return t(lang, "welcome", name=html.escape(user.first_name or ""), channel=CHANNEL, developer=DEVELOPER)
+    return t(lang, "welcome", name=html.escape(user.first_name or ""), channel=CHANNEL)
 
 
 def main_menu(lang):
@@ -77,8 +81,7 @@ def main_menu(lang):
         [InlineKeyboardButton(t(lang, "btn_group"), url=f"https://t.me/{bot.me.username}?startgroup=true")],
         [InlineKeyboardButton(t(lang, "btn_help"), callback_data="help"),
          InlineKeyboardButton(t(lang, "btn_lang"), callback_data="lang")],
-        [InlineKeyboardButton(t(lang, "btn_channel"), url=f"https://t.me/{CHANNEL}"),
-         InlineKeyboardButton(t(lang, "btn_dev"), url=f"https://t.me/{DEVELOPER}")],
+        [InlineKeyboardButton(t(lang, "btn_channel"), url=f"https://t.me/{CHANNEL}")],
     ])
 
 
@@ -102,6 +105,10 @@ def caption_for(post):
         parts.append(html.escape(text if len(text) <= 600 else text[:600] + "…"))
     parts.append(f'🔗 <a href="{html.escape(post.url, quote=True)}">{post.site}</a> · 📥 @{bot.me.username}')
     return "\n\n".join(parts)
+
+
+def site_of(url):
+    return "tiktok" if "tiktok.com" in url else "instagram"
 
 
 # ---------- progress ----------
@@ -219,6 +226,7 @@ async def download(message, url, lang):
     if key and (cached := db.get_sent(key)):
         try:
             await send_items(message, [tuple(i) for i in cached["items"]], cached["caption"])
+            db.add_event(message.from_user and message.from_user.id, site_of(url))
             return
         except RPCError as e:
             log.warning("Cached post %s couldn't be re-sent, downloading again: %s", key, e)
@@ -242,6 +250,7 @@ async def download(message, url, lang):
         log.info("Sent %s (%d files)", key or post.url, len(sent))
         if key:
             db.save_sent(key, {"caption": caption, "items": sent})
+        db.add_event(message.from_user and message.from_user.id, site_of(post.url))
         await status.delete()
     except DownloadError as e:
         await stop(updater)
@@ -251,6 +260,96 @@ async def download(message, url, lang):
         await stop(updater)
         log.exception("Failed on %s", url)
         await status.edit_text(t(lang, "failed"))
+
+
+# ---------- who uses the bot (for /stats) ----------
+
+def track(user, chat):
+    if user and not user.is_bot:
+        db.seen_user(user.id)
+    if chat and chat.type in (ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL):
+        db.seen_chat(chat.id, chat.type.name.lower(), chat.title)
+
+
+# group=-1 runs before the other handlers and doesn't stop them.
+@bot.on_message(group=-1)
+async def track_message(_, message):
+    track(message.from_user, message.chat)
+
+
+@bot.on_callback_query(group=-1)
+async def track_button(_, query):
+    track(query.from_user, query.message.chat if query.message else None)
+
+
+def stats_text(lang):
+    s = db.stats()
+    events = s.pop("events")
+    total, day, week = (sum(v[i] for v in events.values()) for i in range(3))
+    activity = t(lang, "stats_activity", total=total, day=day, week=week,
+                 tiktok=events.get("tiktok", (0,))[0], instagram=events.get("instagram", (0,))[0])
+    since = datetime.fromtimestamp(s.pop("since"), TZ).strftime("%Y/%m/%d")
+    return t(lang, "stats", bot=f"@{bot.me.username}", activity=activity, since=since, **s)
+
+
+# ---------- people must join the channel ----------
+
+MEMBER_CACHE = 600  # seconds to trust a "yes, they joined" before asking Telegram again
+members: dict[int, float] = {}  # user id -> when we last saw them in the channel
+
+
+async def has_joined(user):
+    """True if `user` is in MUST_JOIN. Needs the bot to be an admin in that channel."""
+    if not MUST_JOIN or user is None or user.id == OWNER_ID:
+        return True
+    if time.time() - members.get(user.id, 0) < MEMBER_CACHE:
+        return True
+    try:
+        member = await bot.get_chat_member(MUST_JOIN, user.id)
+    except UserNotParticipant:
+        return False
+    except RPCError as e:
+        # Most likely the bot isn't an admin in the channel yet. Don't lock everyone out.
+        log.warning("Couldn't check if %s joined @%s (is the bot an admin there?): %s", user.id, MUST_JOIN, e)
+        return True
+    if member.status in (ChatMemberStatus.LEFT, ChatMemberStatus.BANNED):
+        return False
+    if member.status == ChatMemberStatus.RESTRICTED and not member.is_member:
+        return False
+    members[user.id] = time.time()
+    return True
+
+
+def join_menu(lang):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(t(lang, "btn_join"), url=f"https://t.me/{MUST_JOIN}")],
+        [InlineKeyboardButton(t(lang, "btn_joined"), callback_data="joined")],
+    ])
+
+
+async def ask_to_join(message, lang):
+    await message.reply(t(lang, "must_join", channel=MUST_JOIN), reply_markup=join_menu(lang),
+                        link_preview_options=NO_PREVIEW)
+
+
+async def joined_button(query, lang):
+    """The "I joined" button: check again, then carry on with what they asked for."""
+    if not await has_joined(query.from_user):
+        return await query.answer(t(lang, "not_joined", channel=MUST_JOIN), show_alert=True)
+    await query.answer(t(lang, "joined_ok"))
+    prompt = query.message
+    original = None
+    if prompt and prompt.reply_to_message_id:
+        try:
+            original = await bot.get_messages(prompt.chat.id, prompt.reply_to_message_id)
+        except RPCError:
+            pass
+    try:
+        await prompt.delete()
+    except RPCError:
+        pass
+    if original and not original.empty and original.from_user and original.from_user.id == query.from_user.id:
+        await resume(original)
 
 
 # ---------- commands ----------
@@ -276,6 +375,11 @@ async def lang_cmd(_, message):
     await message.reply(CHOOSE_LANG, reply_markup=lang_menu())
 
 
+@bot.on_message(filters.command("stats") & filters.user(OWNER_ID))
+async def stats_cmd(_, message):
+    await message.reply(stats_text(user_lang(message.from_user)))
+
+
 # Any message with a TikTok/Instagram link: in private, with /dl in groups, or any
 # group message if privacy mode is turned off in @BotFather.
 has_link = filters.create(lambda _, __, m: bool(downloader.find_urls(m.text or m.caption)))
@@ -284,6 +388,8 @@ has_link = filters.create(lambda _, __, m: bool(downloader.find_urls(m.text or m
 @bot.on_message(has_link & ~filters.via_bot)
 async def link_message(_, message):
     lang = user_lang(message.from_user)
+    if not await has_joined(message.from_user):
+        return await ask_to_join(message, lang)
     user = message.from_user.id if message.from_user else message.chat.id
     if user in busy:
         return await message.reply(t(lang, "busy"))
@@ -293,6 +399,11 @@ async def link_message(_, message):
             await download(message, url, lang)
     finally:
         busy.discard(user)
+
+
+async def resume(message):
+    """Run a message again after its sender joined the channel."""
+    await link_message(bot, message)
 
 
 @bot.on_message(filters.command("dl"))
@@ -311,6 +422,8 @@ async def anything_else(_, message):
 async def buttons(_, query):
     data = query.data or ""
     lang = user_lang(query.from_user)
+    if data == "joined":
+        return await joined_button(query, lang)
     toast = None
     if data.startswith("lang:"):
         lang = data.split(":", 1)[1]
@@ -346,10 +459,16 @@ async def setup_profile():
         groups = [BotCommand(c, t(lang, f"cmd_{c}")) for c in ("dl", "help", "lang")]
         await bot.set_bot_commands(private, scope=BotCommandScopeAllPrivateChats(), language_code=code)
         await bot.set_bot_commands(groups, scope=BotCommandScopeAllGroupChats(), language_code=code)
+        if OWNER_ID:
+            try:  # your own menu also shows /stats
+                await bot.set_bot_commands(private + [BotCommand("stats", t(lang, "cmd_stats"))],
+                                           scope=BotCommandScopeChat(OWNER_ID), language_code=code)
+            except RPCError as e:
+                log.warning("Couldn't set your /stats menu (send /start to the bot first): %s", e)
         await bot.invoke(SetBotInfo(
             lang_code=code,
             about=t(lang, "bot_about", channel=CHANNEL),
-            description=t(lang, "bot_description", channel=CHANNEL, developer=DEVELOPER),
+            description=t(lang, "bot_description", channel=CHANNEL),
         ))
 
 

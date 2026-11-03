@@ -17,8 +17,7 @@ TEXTS = {
             "✅ TikTok photo slideshows with their music\n"
             "✅ Instagram reels, posts and carousels\n\n"
             "Just paste a link here 👇\n\n"
-            "📣 News: @{channel}\n"
-            "👨‍💻 Developer: @{developer}"
+            "📣 News: @{channel}"
         ),
         "help": (
             "ℹ️ <b>Help</b>\n\n"
@@ -46,11 +45,32 @@ TEXTS = {
         "btn_help": "❓ Help",
         "btn_lang": "🌐 Language",
         "btn_channel": "📣 Channel",
-        "btn_dev": "👨‍💻 Developer",
         "btn_back": "⬅️ Back",
         "cmd_start": "Main menu",
         "cmd_help": "How to use the bot",
         "cmd_lang": "Change your language",
+        "must_join": (
+            "📣 <b>Join our channel first</b>\n\n"
+            "To use this bot, please join @{channel}, then tap <b>✅ I joined</b>."
+        ),
+        "btn_join": "📣 Join the channel",
+        "btn_joined": "✅ I joined",
+        "not_joined": "You haven't joined @{channel} yet.",
+        "joined_ok": "✅ Thanks for joining!",
+        "cmd_stats": "Bot stats (only you see this)",
+        "stats": (
+            "📊 <b>{bot} stats</b>\n\n"
+            "👥 Users: <b>{users:,}</b> (+{new_day:,} today · +{new_week:,} this week)\n"
+            "🔥 Active: <b>{active_day:,}</b> today · <b>{active_week:,}</b> this week\n"
+            "🌐 Arabic {ar:,} · English {en:,}\n"
+            "💬 Groups {groups:,} · Channels {channels:,}\n\n"
+            "{activity}\n\n"
+            "<i>Counting since {since}. \"Today\" means the last 24 hours.</i>"
+        ),
+        "stats_activity": (
+            "📥 Downloads: <b>{total:,}</b> (+{day:,} today · +{week:,} this week)\n"
+            "TikTok {tiktok:,} · Instagram {instagram:,}"
+        ),
         "cmd_dl": "Download a TikTok or Instagram link",
         "bot_about": "Download TikTok & Instagram videos and photos in the best quality. By @{channel}",
         "bot_description": (
@@ -58,8 +78,7 @@ TEXTS = {
             "✅ TikTok without watermark\n"
             "✅ Reels, posts, carousels and slideshows\n\n"
             "Just send a link.\n\n"
-            "📣 News: @{channel}\n"
-            "👨‍💻 Developer: @{developer}"
+            "📣 News: @{channel}"
         ),
     },
     "ar": {
@@ -71,8 +90,7 @@ TEXTS = {
             "✅ صور تيك توك مع الموسيقى\n"
             "✅ ريلز ومنشورات وألبومات إنستغرام\n\n"
             "فقط الصق الرابط هنا 👇\n\n"
-            "📣 الأخبار: @{channel}\n"
-            "👨‍💻 المطوّر: @{developer}"
+            "📣 الأخبار: @{channel}"
         ),
         "help": (
             "ℹ️ <b>المساعدة</b>\n\n"
@@ -100,11 +118,32 @@ TEXTS = {
         "btn_help": "❓ المساعدة",
         "btn_lang": "🌐 اللغة",
         "btn_channel": "📣 القناة",
-        "btn_dev": "👨‍💻 المطوّر",
         "btn_back": "⬅️ رجوع",
         "cmd_start": "القائمة الرئيسية",
         "cmd_help": "طريقة استخدام البوت",
         "cmd_lang": "تغيير اللغة",
+        "must_join": (
+            "📣 <b>اشترك بالقناة أولاً</b>\n\n"
+            "حتى تستخدم البوت، اشترك في @{channel} ثم اضغط <b>✅ اشتركت</b>."
+        ),
+        "btn_join": "📣 اشترك بالقناة",
+        "btn_joined": "✅ اشتركت",
+        "not_joined": "لم تشترك في @{channel} بعد.",
+        "joined_ok": "✅ شكراً لاشتراكك!",
+        "cmd_stats": "إحصائيات البوت (تظهر لك فقط)",
+        "stats": (
+            "📊 <b>إحصائيات {bot}</b>\n\n"
+            "👥 المستخدمون: <b>{users:,}</b> (+{new_day:,} اليوم · +{new_week:,} هذا الأسبوع)\n"
+            "🔥 النشطون: <b>{active_day:,}</b> اليوم · <b>{active_week:,}</b> هذا الأسبوع\n"
+            "🌐 العربية {ar:,} · الإنجليزية {en:,}\n"
+            "💬 المجموعات {groups:,} · القنوات {channels:,}\n\n"
+            "{activity}\n\n"
+            "<i>العدّ بدأ في {since}. \"اليوم\" يعني آخر 24 ساعة.</i>"
+        ),
+        "stats_activity": (
+            "📥 التحميلات: <b>{total:,}</b> (+{day:,} اليوم · +{week:,} هذا الأسبوع)\n"
+            "تيك توك {tiktok:,} · إنستغرام {instagram:,}"
+        ),
         "cmd_dl": "تحميل رابط تيك توك أو إنستغرام",
         "bot_about": "حمّل فيديوهات وصور تيك توك وإنستغرام بأفضل جودة. من @{channel}",
         "bot_description": (
@@ -112,8 +151,7 @@ TEXTS = {
             "✅ تيك توك بدون علامة مائية\n"
             "✅ ريلز ومنشورات وألبومات وصور\n\n"
             "فقط أرسل الرابط.\n\n"
-            "📣 الأخبار: @{channel}\n"
-            "👨‍💻 المطوّر: @{developer}"
+            "📣 الأخبار: @{channel}"
         ),
     },
 }
