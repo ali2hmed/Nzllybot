@@ -57,6 +57,7 @@ bot = Client(
     api_hash=os.environ["API_HASH"],
     bot_token=os.environ["BOT_TOKEN"],
     parse_mode=ParseMode.HTML,
+    proxy=os.environ.get("PROXY") or None,  # e.g. a tg://proxy?... link where Telegram is blocked
     workdir=str(DATA_DIR),
 )
 db = DB(str(DATA_DIR / "bot.db"))
