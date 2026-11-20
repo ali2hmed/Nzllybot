@@ -9,3 +9,7 @@ services:
       options:
         max-size: "5m"
         max-file: "3"
+    networks: [default, warp]
+networks:
+  warp:
+    external: true
