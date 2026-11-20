@@ -29,6 +29,7 @@ from pyrogram.types import (
 )
 
 import downloader
+import comeback
 from db import DB
 from downloader import DownloadError
 from texts import CHOOSE_LANG, LANGS, t
@@ -497,7 +498,9 @@ async def main():
         log.warning("Couldn't set up the bot profile: %s", e)
     restart = asyncio.create_task(daily_restart()) if os.environ.get("DAILY_RESTART") else None
     log.info("@%s is running", bot.me.username)
+    watcher = asyncio.create_task(comeback.watch(bot, db, lambda lang: t(lang or "ar", "back_online")))
     await idle()
+    watcher.cancel()
     if restart:
         restart.cancel()
     await bot.stop()
