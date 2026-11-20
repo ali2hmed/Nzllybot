@@ -7,6 +7,7 @@ used the bot in the week before the outage gets a short "I'm back" message.
 
 import asyncio
 import logging
+import os
 import time
 
 from pyrogram.errors import FloodWait, RPCError
@@ -18,6 +19,7 @@ CHECK_EVERY = 60  # seconds
 DOWN_FOR = 10 * 60  # only announce outages at least this long
 ACTIVE_WITHIN = 7 * 86400  # who hears about it: users seen this long before the outage
 ANNOUNCE_GAP = 6 * 3600  # never announce more often than this
+STUCK_FOR = 5 * 60  # restart the bot when Telegram can't be reached for this long
 
 
 def _meta(db, key):
@@ -52,13 +54,18 @@ async def _announce(bot, db, text_for, down_since):
 
 async def watch(bot, db, text_for):
     """Run forever. text_for(lang) returns the message for a user's language."""
+    reached = time.time()  # last time this process reached Telegram
     while True:
         try:
             await asyncio.wait_for(bot.invoke(GetState()), 30)
         except Exception:  # still offline; try again next minute
+            if time.time() - reached >= STUCK_FOR:
+                # The connection can get stuck after the proxy drops. Docker starts us again fresh.
+                log.warning("Can't reach Telegram for %d min, restarting", STUCK_FOR // 60)
+                os._exit(1)
             await asyncio.sleep(CHECK_EVERY)
             continue
-        now = time.time()
+        now = reached = time.time()
         last_ok = _meta(db, "online_at")
         _set_meta(db, "online_at", now)
         if last_ok and now - last_ok >= DOWN_FOR and now - _meta(db, "back_sent_at") >= ANNOUNCE_GAP:
